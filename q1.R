@@ -5,15 +5,10 @@ library(e1071)
 library(ROCR)
 data(spam)
 
-source('calROC.R')
-source('calPred.R')
-source('convertLabels.R')
-source('plotROC.R')
-source('joinFolds.R')
+source('funcs.R')
 
-source('folds.R')
-
-resultsDir = './q1_results/'
+args <- commandArgs(trailingOnly = TRUE)
+parser = parse_1(args)
 
 # split the spam data into training and testing spam sets
 testid = which((seq(1, length(spam[, 1]))) %% 5 == 1)
@@ -22,27 +17,28 @@ spamTrain = spam[-testid ,]
 
 # SVM
 
-predLinear = calPred(spamTrain, spamTest, ker = "linear")
-predRadial = calPred(spamTrain, spamTest, ker = "radial")
-# predPoly = calPred(spamTrain, spamTest, ker = "polynomial")
-# predSig = calPred(spamTrain, spamTest, ker = "sigmoid")
+predLinear = calSVMPred(spamTrain, spamTest, ker = "linear")
+predRadial = calSVMPred(spamTrain, spamTest, ker = "radial")
 
 # -------------------- plot ROC --------------------
 
 type = 'spam'
 labels <- convertLabels(spamTest$type, type)
 
+pdf(parser$outFile1)
 # plot ROC of linear kernel svm result
 predLinear <- convertLabels(predLinear, type)
 ROCLinear = calROC(predLinear, labels)
-plotROC(ROCLinear[[1]], ROCLinear[[2]], 'linear_kernel')
+plotROC(ROCLinear[[1]], ROCLinear[[2]], 'kernel: linear')
 
 # plot ROC of radial kernele svm result
 predRadial <- convertLabels(predRadial, type)
 ROCRadial = calROC(predRadial, labels)
-plotROC(ROCRadial[[1]], ROCRadial[[2]], 'radial_kernel')
+plotROC(ROCRadial[[1]], ROCRadial[[2]], 'kernel: radial')
 
 # -------------------- 10 fold cross-validation --------------------
+
+print('10 folds cross-validation')
 
 foldsNum = 10
 spamFolds = folds(spam, foldsNum)
@@ -50,16 +46,17 @@ pred = vector(mode = 'list', len = foldsNum)
 labels = vector(mode = 'list', len = foldsNum)
 
 for (i in 1 : foldsNum){
+    print(paste('fold', i, 'is running...'))
     dataTrain = joinFolds(spamFolds[-i])
     dataTest = spamFolds[[i]]
-    pred[[i]] = calPred(dataTrain, dataTest, ker = "radial")
+    pred[[i]] = calSVMPred(dataTrain, dataTest, ker = "radial")
     labels[[i]] = dataTest$type
 }
 pred = convertLabels(pred, type)
 labels = convertLabels(labels, type)
 
-ROCtmp = calROC(pred, labels)
-perf = ROCtmp[[1]]
-tiff(paste(resultsDir, '10-cross.tiff', sep = ''))
-plot(perf, col = "grey82", lty = 3)
-plot(perf, lwd = 3, avg = 'vertical', spread.estimate = "boxplot", add = T)
+pdf(parser$outFile2)
+for (i in 1 : foldsNum){
+    ROCtmp = calROC(pred[[i]], labels[[i]])
+    plotROC(ROCtmp[[1]], ROCtmp[[2]], paste('kernel: radial, fold:', i))
+}

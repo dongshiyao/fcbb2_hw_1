@@ -3,94 +3,53 @@ library(klaR)
 library(rpart)
 library(ROCR)
 
-source('calROC.R')
-source('calPred.R')
-source('convertLabels.R')
-source('plotROC.R')
-source('joinFolds.R')
-source('folds.R')
+source('funcs.R')
 
-prefix = './q2_results/' # the directory storing results
-type = 'N' # 'N' is set to TRUE and 'D' is set to FALSE
+args <- commandArgs(trailingOnly = TRUE)
+parser = parse_2(args)
+
+class = 'N' # 'N' is set to TRUE and 'D' is set to FALSE
+type = parser$type
 
 # load data 
-fileName = 'Kato_P53_mutants_200.txt'
+
+fileName = parser$inputFile
 data = read.table(fileName, header = TRUE)
-testidx <- which(1 : length(iris[, 1]) %% 5 == 0)           
-dataTrain <- data[-testidx, ]
-dataTest <- data[testidx, ]
+data = data[-1]
 
-#-------------------- Naive Bayes --------------------
+# leave-one-out (LOO) cross-validation
 
-# calculate prediction
-nbModel <- NaiveBayes(CLASS ~ ., data = dataTrain);      
-nbPred <- predict(nbModel, dataTest[, -2]) 
-table(nbPred$class, dataTest$CLASS)
+pred = vector(mode="list", length=nrow(data))
+print('Computing...')
 
-#-------------------- Decision Tree --------------------
-
-# calculate prediction
-dtModel <- rpart(CLASS ~ ., data = dataTrain)
-dtPred <- predict(dtModel, newdata = dataTest, type = 'class')
-table(dtPred, dataTest$CLASS)
-
-#-------------------- SVM --------------------
-
-# calculate prediction
-svmModel <- svm(CLASS ~ ., data = dataTrain, probability = TRUE)
-svmPred <- predict(svmModel, dataTest[, -2], probability = TRUE)
-table(svmPred, dataTest$CLASS)
-
-# plot ROC
-labels = convertLabels(dataTest$CLASS, type)
-scores = convertLabels(svmPred, type)
-svmROC = calROC(scores, labels)
-plotROC(svmROC[[1]], svmROC[[2]], 'SVM_ROC', prefix)
-
-# 10 cross validation
-
-foldsNum = 10
-
-dataFolds = folds(data, foldsNum)
-pred = vector(mode="list", length=3)
-names(pred) = c('nb', 'dt', 'svm')
-for (i in 1 : 3){
-    pred[[i]] = vector(mode = 'list', len = foldsNum)
+for (i in 1 : nrow(data)){
+    dataTrain = data[-i, ]
+    dataTest = data[i, ]
+    if (type == 'nbayes'){ # Naive Bayes
+        nbModel <- NaiveBayes(CLASS ~ ., data = dataTrain);      
+        tmp <- predict(nbModel, dataTest[, -1]) 
+        tmp = tmp$posterior
+    }else if (type == 'dtree'){ # Decision Tree
+        dtModel <- rpart(CLASS ~ ., data = dataTrain)
+        tmp <- predict(dtModel, newdata = dataTest[, -1], type = 'prob')
+    }else if (type == 'svm'){ # SVM
+        svmModel <- svm(CLASS ~ ., data = dataTrain, probability = TRUE)
+        tmp <- predict(svmModel, dataTest[, -1], probability = TRUE)
+        tmp = attr(tmp, 'probabilities')
+    }else {
+        stop(paste('Unrecognized type:', type))
+    }
+    pred[[i]] = tmp
 }
-labels = vector(mode = 'list', len = foldsNum)
 
-for (i in 1 : foldsNum){
-    # get training data and testing data from the folds
-    dataTrain = joinFolds(dataFolds[-i])
-    dataTest = dataFolds[[i]]
-    # Naive Bayes
-    nbModel <- NaiveBayes(CLASS ~ ., data = dataTrain);      
-    tmp <- predict(nbModel, dataTest[, -2]) 
-    pred$nb[[i]] = tmp$posterior
-    # Decision Tree
-    dtModel <- rpart(CLASS ~ ., data = dataTrain)
-    pred$dt[[i]] <- predict(dtModel, newdata = dataTest, type = 'class')
-    # SVM
-    svmModel <- svm(CLASS ~ ., data = dataTrain, probability = TRUE)
-    pred$svm[[i]] <- predict(svmModel, dataTest[, -2], probability = TRUE)
-    # true labels
-    labels[[i]] = dataTest[, 2]
-}
-warnings()
 # convert pred and labels to enalbe ROC calculation
-for (i in 1 : 3){
-    pred[[i]] = convertLabels(pred[[i]], type)
-}
-labels = convertLabels(labels, type)
+pred = convertLabels(pred, class)
+pred = as.double(pred)
+labels = convertLabels(data$CLASS, class)
 
-perf = vector(mode='list', len=3)
-names(perf) = c('nb', 'dt', 'svm')
-namesList = names(perf)
-for (i in 1 : 3){
-    ROCtmp = calROC(pred[[i]], labels)
-    perf[[i]] = ROCtmp[[1]]
+pdf(parser$outputFile)
+ROCtmp = calROC(pred, labels)
+plotName = paste('ROC_', type, sep = '')
+plotROC(ROCtmp[[1]], ROCtmp[[2]], plotName)
 
-    tiff(paste(prefix, '10-cross_', namesList[i], '.tiff', sep = ''))
-    plot(perf[[i]], col="grey82", lty=3)
-    plot(perf[[i]], lwd=3, avg="vertical", spread.estimate="boxplot", add=T)
-}
+print(sprintf('AUC = %.4f', ROCtmp[[2]]))
